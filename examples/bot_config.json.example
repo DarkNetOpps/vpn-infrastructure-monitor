@@ -1,0 +1,5 @@
+{
+  "bot_token": "PUT_YOUR_BOT_TOKEN",
+  "chat_id": "PUT_YOUR_CHAT_ID",
+  "interval": 60
+}

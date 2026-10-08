@@ -1,0 +1,13 @@
+[Unit]
+Description=VPN Monitor Collector
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vpn-monitor
+ExecStart=/opt/vpn-monitor/venv/bin/python /opt/vpn-monitor/collector.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

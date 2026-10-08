@@ -1,0 +1,15 @@
+SERVER_NAME="IR-SERVER-NAME"
+DOMAIN="YOUR_SERVER_DOMAIN"
+REMOTE="REMOTE_SERVER_NAME"
+
+HPN_PORT="10830"
+JET_PORT="10930"
+
+# Never put real credentials in this example file.
+# Telegram credentials should be stored in a separate local,
+# permission-restricted configuration file.
+BOT_TOKEN="PUT_YOUR_BOT_TOKEN"
+CHAT_ID="PUT_YOUR_CHAT_ID"
+
+COLLECTOR_URL="http://YOUR_MASTER_IP:8080/report"
+API_KEY="CHANGE_THIS_SECRET"

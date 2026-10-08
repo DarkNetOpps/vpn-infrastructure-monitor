@@ -1,0 +1,10 @@
+bot_config.json
+config.json
+
+reports/
+old_reports/
+
+__pycache__/
+*.pyc
+
+*.backup.py

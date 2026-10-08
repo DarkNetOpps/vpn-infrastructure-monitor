@@ -1,0 +1,13 @@
+[Unit]
+Description=VPN Monitor Telegram Bot
+After=network.target vpn-monitor-collector.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vpn-monitor
+ExecStart=/opt/vpn-monitor/venv/bin/python /opt/vpn-monitor/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
