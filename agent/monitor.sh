@@ -37,12 +37,11 @@ RX_DROP="$(statv rx_dropped)"; TX_DROP="$(statv tx_dropped)"
 
 # CPU usage from /proc/stat deltas (percentage, one-second sample).
 read -r _ U1 N1 S1 I1 W1 Q1 SQ1 ST1 _ < /proc/stat
-IDLE1=$((I1+W1)); TOTAL1=$((U1+N1+S1+I1+W1+Q1+SQ1+ST1))
 sleep 1
 read -r _ U2 N2 S2 I2 W2 Q2 SQ2 ST2 _ < /proc/stat
-IDLE2=$((I2+W2)); TOTAL2=$((U2+N2+S2+I2+W2+Q2+SQ2+ST2))
-DT=$((TOTAL2-TOTAL1)); DI=$((IDLE2-IDLE1))
-if (( DT > 0 )); then CPU_USED=$(( (DT-DI)*100/DT )); else CPU_USED=0; fi
+DU=$((U2+N2-U1-N1)); DS=$((S2+Q2+SQ2-S1-Q1-SQ1)); DI=$((I2-I1)); DW=$((W2-W1)); DST=$((ST2-ST1))
+DT=$((DU+DS+DI+DW+DST))
+if (( DT > 0 )); then CPU_USER=$((DU*100/DT)); CPU_SYSTEM=$((DS*100/DT)); CPU_IDLE=$((DI*100/DT)); CPU_IOWAIT=$((DW*100/DT)); CPU_STEAL=$((DST*100/DT)); CPU_USED=$(((DU+DS+DST)*100/DT)); else CPU_USER=0; CPU_SYSTEM=0; CPU_IDLE=0; CPU_IOWAIT=0; CPU_STEAL=0; CPU_USED=0; fi
 
 RAM_TOTAL="$(free -m | awk '/^Mem:/ {print $2}')"
 RAM_USED="$(free -m | awk '/^Mem:/ {print $3}')"
@@ -85,7 +84,7 @@ KERNEL_ERR="$(journalctl -k --since '2 min ago' --no-pager 2>/dev/null | grep -E
 KERNEL_TAIL="$(journalctl -k --since '2 min ago' --no-pager 2>/dev/null | grep -Ei 'NETDEV WATCHDOG|out of memory|oom-kill|conntrack.*full|link is down|transmit.*timeout|I/O error' | tail -5 || true)"
 
 export TIME DATE SERVER_NAME REMOTE IFACE RX_MBPS TX_MBPS RX_ERR TX_ERR RX_DROP TX_DROP
-export CPU_USED RAM_TOTAL RAM_USED RAM_FREE LOAD1 LOAD5 LOAD15 UPTIME DISK_USED
+export CPU_USER CPU_SYSTEM CPU_IDLE CPU_IOWAIT CPU_STEAL CPU_USED RAM_TOTAL RAM_USED RAM_FREE LOAD1 LOAD5 LOAD15 UPTIME DISK_USED
 export EST TIMEWAIT SYNRECV CLOSEWAIT OPEN_FILES FILE_MAX CT_CURRENT CT_MAX
 export XUI HPN HPNSSH JET XUI_PID HPN_PID HPNSSH_PID JET_PID HPN_CONN JET_CONN
 export HPN_ERR XUI_ERR JET_ERR KERNEL_ERR KERNEL_TAIL HPN_PORT JET_PORT TUNNEL_PORTS
@@ -139,8 +138,8 @@ def custom_tunnels():
 
 data = {
   "time": v("TIME"), "server": v("SERVER_NAME", "unknown"), "remote": v("REMOTE", "unknown"),
-  "cpu": {"user": str(n("CPU_USED")), "system": "N/A", "iowait": "N/A", "steal": "N/A", "used_percent": n("CPU_USED")},
-  "ram": {"used_mb": v("RAM_USED"), "total_mb": v("RAM_TOTAL"), "available_mb": v("RAM_FREE")},
+  "cpu": {"user": str(n("CPU_USER")), "system": str(n("CPU_SYSTEM")), "idle": str(n("CPU_IDLE")), "iowait": str(n("CPU_IOWAIT")), "steal": str(n("CPU_STEAL")), "used_percent": n("CPU_USED")},
+ "ram": {"used_mb": v("RAM_USED"), "total_mb": v("RAM_TOTAL"), "available_mb": v("RAM_FREE")},
   "load": {"1m": v("LOAD1"), "5m": v("LOAD5"), "15m": v("LOAD15")},
   "network": {"iface": v("IFACE"), "rx_mbps": v("RX_MBPS"), "tx_mbps": v("TX_MBPS"), "rx_drop": v("RX_DROP"), "tx_drop": v("TX_DROP"), "rx_errors": v("RX_ERR"), "tx_errors": v("TX_ERR")},
   "tcp": {"established": v("EST"), "time_wait": v("TIMEWAIT"), "syn_recv": v("SYNRECV"), "close_wait": v("CLOSEWAIT")},
