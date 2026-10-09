@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/vpn-monitor
-ExecStart=/opt/vpn-monitor/venv/bin/python /opt/vpn-monitor/collector.py
+ExecStart=/opt/vpn-monitor/venv/bin/python -u /opt/vpn-monitor/collector.py
 Restart=always
 RestartSec=5
 

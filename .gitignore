@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 
 *.backup.py
+install-agent.sh.backup*
+*.bak*
+*.backup*
