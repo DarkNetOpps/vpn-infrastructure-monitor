@@ -1,0 +1,11 @@
+[Unit]
+Description=Run VPN Infrastructure Agent Monitor Every Minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=net-monitor.service
+
+[Install]
+WantedBy=timers.target

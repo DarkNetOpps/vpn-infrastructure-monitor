@@ -1,220 +1,121 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
+set -u
 BASE="/opt/net-monitor"
 CONFIG="$BASE/config.conf"
-
+if [[ ! -r "$CONFIG" ]]; then
+  echo "ERROR: Missing config: $CONFIG" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
 source "$CONFIG"
-
 LOG_DIR="$BASE/logs"
 JSON_DIR="$LOG_DIR/json"
-
 mkdir -p "$JSON_DIR"
+chmod 700 "$BASE" "$LOG_DIR" "$JSON_DIR" 2>/dev/null || true
 
-DATE=$(date +"%Y-%m-%d")
-TIME=$(date +"%Y-%m-%d %H:%M:%S")
-
+TIME="$(date '+%Y-%m-%d %H:%M:%S%z')"
+DATE="$(date '+%Y-%m-%d')"
 JSON_FILE="$JSON_DIR/$DATE.jsonl"
 READABLE="$LOG_DIR/readable.log"
+IFACE="$(ip route show default 2>/dev/null | awk 'NR==1 {print $5}')"
+IFACE="${IFACE:-unknown}"
 
-
-# =====================
-# NETWORK INTERFACE
-# =====================
-
-IFACE=$(ip route | awk '/default/ {print $5; exit}')
-
-RX1=$(cat /sys/class/net/$IFACE/statistics/rx_bytes)
-TX1=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
-
-sleep 1
-
-RX2=$(cat /sys/class/net/$IFACE/statistics/rx_bytes)
-TX2=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
-
-RX_MBPS=$(( (RX2-RX1)*8/1000000 ))
-TX_MBPS=$(( (TX2-TX1)*8/1000000 ))
-
-
-RX_ERR=$(cat /sys/class/net/$IFACE/statistics/rx_errors 2>/dev/null || echo 0)
-TX_ERR=$(cat /sys/class/net/$IFACE/statistics/tx_errors 2>/dev/null || echo 0)
-
-RX_DROP=$(cat /sys/class/net/$IFACE/statistics/rx_dropped 2>/dev/null || echo 0)
-TX_DROP=$(cat /sys/class/net/$IFACE/statistics/tx_dropped 2>/dev/null || echo 0)
-
-
-# =====================
-# CPU
-# =====================
-
-CPU=$(top -bn1 | grep "Cpu(s)")
-
-CPU_USER=$(echo "$CPU" | awk '{print $2}')
-CPU_SYS=$(echo "$CPU" | awk '{print $4}')
-CPU_IDLE=$(echo "$CPU" | awk '{print $8}')
-CPU_IOWAIT=$(echo "$CPU" | awk '{print $10}')
-
-STEAL=$(vmstat 1 2 | tail -1 | awk '{print $17}')
-
-
-# =====================
-# RAM LOAD
-# =====================
-
-RAM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
-RAM_USED=$(free -m | awk '/Mem:/ {print $3}')
-RAM_FREE=$(free -m | awk '/Mem:/ {print $7}')
-
-LOAD=$(cat /proc/loadavg)
-
-LOAD1=$(echo $LOAD | awk '{print $1}')
-LOAD5=$(echo $LOAD | awk '{print $2}')
-LOAD15=$(echo $LOAD | awk '{print $3}')
-
-
-UPTIME=$(uptime -p)
-
-
-# =====================
-# TCP
-# =====================
-
-EST=$(ss -ant state established | wc -l)
-TIMEWAIT=$(ss -ant state time-wait | wc -l)
-SYNRECV=$(ss -ant state syn-recv | wc -l)
-CLOSEWAIT=$(ss -ant state close-wait | wc -l)
-
-
-# =====================
-# SOCKET
-# =====================
-
-OPEN_FILES=$(cat /proc/sys/fs/file-nr | awk '{print $1}')
-FILE_MAX=$(cat /proc/sys/fs/file-max)
-
-
-# =====================
-# CONNTRACK
-# =====================
-
-if [ -f /proc/sys/net/netfilter/nf_conntrack_count ]; then
-
-CT_CURRENT=$(cat /proc/sys/net/netfilter/nf_conntrack_count)
-CT_MAX=$(cat /proc/sys/net/netfilter/nf_conntrack_max)
-
-else
-
-CT_CURRENT="N/A"
-CT_MAX="N/A"
-
-fi
-
-
-# =====================
-# SERVICES
-# =====================
-
-service_check(){
-
-systemctl is-active --quiet $1
-
-if [ $? -eq 0 ]; then
-echo "UP"
-else
-echo "DOWN"
-fi
-
+statv() {
+  local key="$1"
+  if [[ "$IFACE" != unknown && -r "/sys/class/net/$IFACE/statistics/$key" ]]; then
+    cat "/sys/class/net/$IFACE/statistics/$key"
+  else
+    echo 0
+  fi
 }
+RX1="$(statv rx_bytes)"; TX1="$(statv tx_bytes)"
+sleep 1
+RX2="$(statv rx_bytes)"; TX2="$(statv tx_bytes)"
+RX_MBPS=$(( (RX2-RX1)*8/1000000 )); TX_MBPS=$(( (TX2-TX1)*8/1000000 ))
+RX_ERR="$(statv rx_errors)"; TX_ERR="$(statv tx_errors)"
+RX_DROP="$(statv rx_dropped)"; TX_DROP="$(statv tx_dropped)"
 
+# CPU usage from /proc/stat deltas (percentage, one-second sample).
+read -r _ U1 N1 S1 I1 W1 Q1 SQ1 ST1 _ < /proc/stat
+IDLE1=$((I1+W1)); TOTAL1=$((U1+N1+S1+I1+W1+Q1+SQ1+ST1))
+sleep 1
+read -r _ U2 N2 S2 I2 W2 Q2 SQ2 ST2 _ < /proc/stat
+IDLE2=$((I2+W2)); TOTAL2=$((U2+N2+S2+I2+W2+Q2+SQ2+ST2))
+DT=$((TOTAL2-TOTAL1)); DI=$((IDLE2-IDLE1))
+if (( DT > 0 )); then CPU_USED=$(( (DT-DI)*100/DT )); else CPU_USED=0; fi
 
-XUI=$(service_check x-ui)
-HPN=$(service_check hpn-reverse)
-HPNSSH=$(service_check hpnssh)
-JET=$(service_check jet-nginx)
+RAM_TOTAL="$(free -m | awk '/^Mem:/ {print $2}')"
+RAM_USED="$(free -m | awk '/^Mem:/ {print $3}')"
+RAM_FREE="$(free -m | awk '/^Mem:/ {print $7}')"
+read -r LOAD1 LOAD5 LOAD15 _ < /proc/loadavg
+UPTIME="$(cut -d' ' -f1 /proc/uptime)"
+DISK_USED="$(df -P / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
 
+EST="$(ss -Hant state established 2>/dev/null | wc -l)"
+TIMEWAIT="$(ss -Hant state time-wait 2>/dev/null | wc -l)"
+SYNRECV="$(ss -Hant state syn-recv 2>/dev/null | wc -l)"
+CLOSEWAIT="$(ss -Hant state close-wait 2>/dev/null | wc -l)"
+OPEN_FILES="$(awk '{print $1}' /proc/sys/fs/file-nr)"
+FILE_MAX="$(cat /proc/sys/fs/file-max)"
+CT_CURRENT="N/A"; CT_MAX="N/A"
+if [[ -r /proc/sys/net/netfilter/nf_conntrack_count ]]; then
+  CT_CURRENT="$(cat /proc/sys/net/netfilter/nf_conntrack_count)"
+  CT_MAX="$(cat /proc/sys/net/netfilter/nf_conntrack_max)"
+fi
 
-# =====================
-# PORTS
-# =====================
+service_state() { systemctl is-active "$1" 2>/dev/null || true; }
+service_pid() { systemctl show "$1" -p MainPID --value 2>/dev/null || echo 0; }
+XUI="$(service_state x-ui)"; HPN="$(service_state hpn-reverse)"
+HPNSSH="$(service_state hpnssh)"; JET="$(service_state jet-nginx)"
+XUI_PID="$(service_pid x-ui)"; HPN_PID="$(service_pid hpn-reverse)"
+HPNSSH_PID="$(service_pid hpnssh)"; JET_PID="$(service_pid jet-nginx)"
 
-HPN_CONN=$(ss -ant | grep ":$HPN_PORT " | wc -l)
-JET_CONN=$(ss -ant | grep ":$JET_PORT " | wc -l)
+port_count() {
+  local port="${1:-}"
+  if [[ "$port" =~ ^[0-9]+$ ]]; then
+    ss -Hant 2>/dev/null | awk -v p="$port" '($4 ~ ":"p"$") || ($5 ~ ":"p"$") {n++} END {print n+0}'
+  else echo 0; fi
+}
+HPN_CONN="$(port_count "${HPN_PORT:-}")"; JET_CONN="$(port_count "${JET_PORT:-}")"
+HPN_ERR="$(journalctl -u hpn-reverse --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'error|fail|closed|timeout|disconnect|reset' || true)"
+XUI_ERR="$(journalctl -u x-ui --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'error|fail|timeout|reset' || true)"
+JET_ERR="$(journalctl -u jet-nginx --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'error|fail|timeout|reset' || true)"
+KERNEL_ERR="$(journalctl -k --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'NETDEV WATCHDOG|out of memory|oom-kill|conntrack.*full|link is down|transmit.*timeout|I/O error' || true)"
+KERNEL_TAIL="$(journalctl -k --since '2 min ago' --no-pager 2>/dev/null | grep -Ei 'NETDEV WATCHDOG|out of memory|oom-kill|conntrack.*full|link is down|transmit.*timeout|I/O error' | tail -5 || true)"
 
+export TIME DATE SERVER_NAME REMOTE IFACE RX_MBPS TX_MBPS RX_ERR TX_ERR RX_DROP TX_DROP
+export CPU_USED RAM_TOTAL RAM_USED RAM_FREE LOAD1 LOAD5 LOAD15 UPTIME DISK_USED
+export EST TIMEWAIT SYNRECV CLOSEWAIT OPEN_FILES FILE_MAX CT_CURRENT CT_MAX
+export XUI HPN HPNSSH JET XUI_PID HPN_PID HPNSSH_PID JET_PID HPN_CONN JET_CONN
+export HPN_ERR XUI_ERR JET_ERR KERNEL_ERR KERNEL_TAIL HPN_PORT JET_PORT
 
-# =====================
-# ERRORS
-# =====================
+python3 - "$JSON_FILE" "$READABLE" <<'PY'
+import json, os, sys
 
-HPN_ERR=$(journalctl -u hpn-reverse --since "1 min ago" 2>/dev/null | grep -Ei "error|fail|closed" | wc -l)
+def v(k, default="N/A"):
+    return os.environ.get(k, default)
+def n(k):
+    try: return int(v(k, "0"))
+    except (ValueError, TypeError): return 0
 
-XUI_ERR=$(journalctl -u x-ui --since "1 min ago" 2>/dev/null | grep -Ei "error|fail" | wc -l)
+data = {
+  "time": v("TIME"), "server": v("SERVER_NAME", "unknown"), "remote": v("REMOTE", "unknown"),
+  "cpu": {"user": str(n("CPU_USED")), "system": "N/A", "iowait": "N/A", "steal": "N/A", "used_percent": n("CPU_USED")},
+  "ram": {"used_mb": v("RAM_USED"), "total_mb": v("RAM_TOTAL"), "available_mb": v("RAM_FREE")},
+  "load": {"1m": v("LOAD1"), "5m": v("LOAD5"), "15m": v("LOAD15")},
+  "network": {"iface": v("IFACE"), "rx_mbps": v("RX_MBPS"), "tx_mbps": v("TX_MBPS"), "rx_drop": v("RX_DROP"), "tx_drop": v("TX_DROP"), "rx_errors": v("RX_ERR"), "tx_errors": v("TX_ERR")},
+  "tcp": {"established": v("EST"), "time_wait": v("TIMEWAIT"), "syn_recv": v("SYNRECV"), "close_wait": v("CLOSEWAIT")},
+  "socket": {"open": v("OPEN_FILES"), "max": v("FILE_MAX")},
+  "conntrack": {"current": v("CT_CURRENT"), "max": v("CT_MAX")},
+  "services": {"xui": v("XUI"), "hpn": v("HPN"), "hpnssh": v("HPNSSH"), "jet": v("JET")},
+  "service_pids": {"xui": v("XUI_PID"), "hpn": v("HPN_PID"), "hpnssh": v("HPNSSH_PID"), "jet": v("JET_PID")},
+  "tunnel": {"hpn": v("HPN_CONN"), "jet": v("JET_CONN"), "hpn_port": v("HPN_PORT"), "jet_port": v("JET_PORT")},
+  "errors": {"hpn": v("HPN_ERR"), "xui": v("XUI_ERR"), "jet": v("JET_ERR"), "kernel": v("KERNEL_ERR"), "kernel_details": v("KERNEL_TAIL", "")},
+  "system": {"uptime_seconds": v("UPTIME"), "root_disk_used_percent": v("DISK_USED")}
+}
+line = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+with open(sys.argv[1], "a", encoding="utf-8") as f: f.write(line + "\n")
+with open(sys.argv[2], "a", encoding="utf-8") as f: f.write(line + "\n")
+PY
 
-JET_ERR=$(journalctl -u jet-nginx --since "1 min ago" 2>/dev/null | grep -Ei "error|fail" | wc -l)
-
-
-
-# =====================
-# JSONL
-# =====================
-
-cat >> "$JSON_FILE" <<EOF
-{"time":"$TIME","server":"$SERVER_NAME","remote":"$REMOTE","cpu":{"user":"$CPU_USER","system":"$CPU_SYS","iowait":"$CPU_IOWAIT","steal":"$STEAL"},"ram":{"used_mb":"$RAM_USED","total_mb":"$RAM_TOTAL"},"load":{"1m":"$LOAD1","5m":"$LOAD5","15m":"$LOAD15"},"network":{"iface":"$IFACE","rx_mbps":"$RX_MBPS","tx_mbps":"$TX_MBPS","rx_drop":"$RX_DROP","tx_drop":"$TX_DROP"},"tcp":{"established":"$EST","time_wait":"$TIMEWAIT","syn_recv":"$SYNRECV","close_wait":"$CLOSEWAIT"},"socket":{"open":"$OPEN_FILES","max":"$FILE_MAX"},"conntrack":{"current":"$CT_CURRENT","max":"$CT_MAX"},"services":{"xui":"$XUI","hpn":"$HPN","hpnssh":"$HPNSSH","jet":"$JET"},"tunnel":{"hpn":"$HPN_CONN","jet":"$JET_CONN"},"errors":{"hpn":"$HPN_ERR","xui":"$XUI_ERR","jet":"$JET_ERR"}}
-EOF
-
-
-
-# =====================
-# READABLE LOG
-# =====================
-
-cat >> "$READABLE" <<EOF
-
-==============================
-$TIME
-$SERVER_NAME -> $REMOTE
-
-CPU:
-USER $CPU_USER
-SYSTEM $CPU_SYS
-STEAL $STEAL
-
-RAM:
-$RAM_USED / $RAM_TOTAL MB
-
-LOAD:
-$LOAD1 $LOAD5 $LOAD15
-
-NETWORK:
-$IFACE
-RX ${RX_MBPS} Mbps
-TX ${TX_MBPS} Mbps
-
-TCP:
-ESTABLISHED $EST
-TIME_WAIT $TIMEWAIT
-SYN_RECV $SYNRECV
-CLOSE_WAIT $CLOSEWAIT
-
-SOCKET:
-$OPEN_FILES / $FILE_MAX
-
-CONNTRACK:
-$CT_CURRENT / $CT_MAX
-
-SERVICES:
-x-ui $XUI
-HPN $HPN
-HPNSSH $HPNSSH
-JET $JET
-
-TUNNEL:
-HPN $HPN_CONN
-JET $JET_CONN
-
-ERROR:
-HPN $HPN_ERR
-XUI $XUI_ERR
-JET $JET_ERR
-
-==============================
-
-EOF
+echo "Monitor snapshot saved: $JSON_FILE"

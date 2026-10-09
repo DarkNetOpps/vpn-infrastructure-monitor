@@ -1,0 +1,9 @@
+[Unit]
+Description=VPN Infrastructure Agent Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/net-monitor/monitor.sh
+ExecStartPost=/opt/net-monitor/sender.sh
