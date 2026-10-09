@@ -77,6 +77,7 @@ port_count() {
   else echo 0; fi
 }
 HPN_CONN="$(port_count "${HPN_PORT:-}")"; JET_CONN="$(port_count "${JET_PORT:-}")"
+TUNNEL_PORTS="${TUNNEL_PORTS:-}"
 HPN_ERR="$(journalctl -u hpn-reverse --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'error|fail|closed|timeout|disconnect|reset' || true)"
 XUI_ERR="$(journalctl -u x-ui --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'error|fail|timeout|reset' || true)"
 JET_ERR="$(journalctl -u jet-nginx --since '2 min ago' --no-pager 2>/dev/null | grep -Eic 'error|fail|timeout|reset' || true)"
@@ -87,16 +88,54 @@ export TIME DATE SERVER_NAME REMOTE IFACE RX_MBPS TX_MBPS RX_ERR TX_ERR RX_DROP 
 export CPU_USED RAM_TOTAL RAM_USED RAM_FREE LOAD1 LOAD5 LOAD15 UPTIME DISK_USED
 export EST TIMEWAIT SYNRECV CLOSEWAIT OPEN_FILES FILE_MAX CT_CURRENT CT_MAX
 export XUI HPN HPNSSH JET XUI_PID HPN_PID HPNSSH_PID JET_PID HPN_CONN JET_CONN
-export HPN_ERR XUI_ERR JET_ERR KERNEL_ERR KERNEL_TAIL HPN_PORT JET_PORT
+export HPN_ERR XUI_ERR JET_ERR KERNEL_ERR KERNEL_TAIL HPN_PORT JET_PORT TUNNEL_PORTS
 
 python3 - "$JSON_FILE" "$READABLE" <<'PY'
-import json, os, sys
+import json, os, re, subprocess, sys
 
 def v(k, default="N/A"):
     return os.environ.get(k, default)
 def n(k):
     try: return int(v(k, "0"))
     except (ValueError, TypeError): return 0
+
+def custom_tunnels():
+    raw = v("TUNNEL_PORTS", "")
+    if not raw:
+        return []
+
+    try:
+        output = subprocess.run(
+            ["ss", "-Hant"],
+            check=False, capture_output=True, text=True, timeout=5
+        ).stdout.splitlines()
+    except Exception:
+        output = []
+
+    result = []
+    for item in raw.split(","):
+        if ":" not in item:
+            continue
+        name, port = item.rsplit(":", 1)
+        if not name or not port.isdigit() or not (1 <= int(port) <= 65535):
+            continue
+
+        count = 0
+        for row in output:
+            fields = row.split()
+            if len(fields) < 5:
+                continue
+            local_addr, peer_addr = fields[-2], fields[-1]
+            suffix = ":" + port
+            if local_addr.endswith(suffix) or peer_addr.endswith(suffix):
+                count += 1
+
+        result.append({
+            "name": name,
+            "port": int(port),
+            "connections": count
+        })
+    return result
 
 data = {
   "time": v("TIME"), "server": v("SERVER_NAME", "unknown"), "remote": v("REMOTE", "unknown"),
@@ -110,6 +149,7 @@ data = {
   "services": {"xui": v("XUI"), "hpn": v("HPN"), "hpnssh": v("HPNSSH"), "jet": v("JET")},
   "service_pids": {"xui": v("XUI_PID"), "hpn": v("HPN_PID"), "hpnssh": v("HPNSSH_PID"), "jet": v("JET_PID")},
   "tunnel": {"hpn": v("HPN_CONN"), "jet": v("JET_CONN"), "hpn_port": v("HPN_PORT"), "jet_port": v("JET_PORT")},
+  "tunnels": custom_tunnels(),
   "errors": {"hpn": v("HPN_ERR"), "xui": v("XUI_ERR"), "jet": v("JET_ERR"), "kernel": v("KERNEL_ERR"), "kernel_details": v("KERNEL_TAIL", "")},
   "system": {"uptime_seconds": v("UPTIME"), "root_disk_used_percent": v("DISK_USED")}
 }

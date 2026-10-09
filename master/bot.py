@@ -121,6 +121,7 @@ def format_report(report):
     conntrack = report.get("conntrack", {})
     services = report.get("services", {})
     tunnel = report.get("tunnel", {})
+    custom_tunnels = report.get("tunnels")
     errors = report.get("errors", {})
 
     lines = [
@@ -156,8 +157,27 @@ def format_report(report):
 
         f"CT {fmt(conntrack.get('current'))}/{fmt(conntrack.get('max'))}",
 
-        f"TUN HPN {fmt(tunnel.get('hpn'))} | "
-        f"JET {fmt(tunnel.get('jet'))}",
+        *(
+            [
+                "TUNNELS",
+                *[
+                    f"{item.get('name', 'Tunnel')} : "
+                    f"{fmt(item.get('connections'))} connections "
+                    f"(port {fmt(item.get('port'))})"
+                    for item in custom_tunnels
+                    if isinstance(item, dict)
+                ],
+            ]
+            if isinstance(custom_tunnels, list) and custom_tunnels
+            else (
+                ["TUNNELS none configured"]
+                if isinstance(custom_tunnels, list)
+                else [
+                    f"TUN HPN {fmt(tunnel.get('hpn'))} | "
+                    f"JET {fmt(tunnel.get('jet'))}"
+                ]
+            )
+        ),
 
         "SVC "
         f"XUI {service_icon(services.get('xui'))} "

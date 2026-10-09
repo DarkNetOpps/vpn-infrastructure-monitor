@@ -38,25 +38,50 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "First-time setup: enter this server's settings."
     read -r -p "Server name (e.g. IR-6): " SERVER_NAME
     read -r -p "Remote server name (e.g. TR-3): " REMOTE
-    read -r -p "HPN port: " HPN_PORT
-    read -r -p "JET port: " JET_PORT
+    HPN_PORT=""
+    JET_PORT=""
+    TUNNEL_PORTS=""
+
+    read -r -p "Number of custom tunnel ports (0-10): " TUNNEL_COUNT
+    [[ "$TUNNEL_COUNT" =~ ^[0-9]+$ ]] || {
+        echo "ERROR: Tunnel count must be a number from 0 to 10." >&2
+        exit 1
+    }
+    (( 10#$TUNNEL_COUNT <= 10 )) || {
+        echo "ERROR: Maximum is 10 tunnel ports." >&2
+        exit 1
+    }
+    TUNNEL_COUNT=$((10#$TUNNEL_COUNT))
+
+    for ((i=1; i<=TUNNEL_COUNT; i++)); do
+        read -r -p "Tunnel $i name (e.g. MyTunnel): " TUN_NAME
+        read -r -p "Tunnel $i port (e.g. 10990): " TUN_PORT
+
+        [[ -n "$TUN_NAME" && "$TUN_NAME" != *","* &&
+           "$TUN_NAME" != *":"* ]] || {
+            echo "ERROR: Tunnel name must be nonempty and cannot contain comma or colon." >&2
+            exit 1
+        }
+
+        [[ "$TUN_PORT" =~ ^[0-9]+$ ]] || {
+            echo "ERROR: Tunnel port must be numeric." >&2
+            exit 1
+        }
+        (( 10#$TUN_PORT >= 1 && 10#$TUN_PORT <= 65535 )) || {
+            echo "ERROR: Tunnel port must be between 1 and 65535." >&2
+            exit 1
+        }
+
+        [[ -z "$TUNNEL_PORTS" ]] || TUNNEL_PORTS+=","
+        TUNNEL_PORTS+="$TUN_NAME:$TUN_PORT"
+    done
+
     read -r -p "Collector URL (e.g. http://MASTER_IP:8080/report): " COLLECTOR_URL
     read -r -s -p "Collector API key: " API_KEY
     echo
 
     [[ -n "$SERVER_NAME" && -n "$REMOTE" ]] || {
         echo "ERROR: Server and remote names are required." >&2
-        exit 1
-    }
-
-    [[ "$HPN_PORT" =~ ^[0-9]+$ && "$JET_PORT" =~ ^[0-9]+$ ]] || {
-        echo "ERROR: Ports must be numeric." >&2
-        exit 1
-    }
-
-    (( HPN_PORT >= 1 && HPN_PORT <= 65535 &&
-       JET_PORT >= 1 && JET_PORT <= 65535 )) || {
-        echo "ERROR: Ports must be between 1 and 65535." >&2
         exit 1
     }
 
@@ -77,6 +102,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
         printf 'REMOTE=%q\n' "$REMOTE"
         printf 'HPN_PORT=%q\n' "$HPN_PORT"
         printf 'JET_PORT=%q\n' "$JET_PORT"
+        printf 'TUNNEL_PORTS=%q\n' "$TUNNEL_PORTS"
         printf 'COLLECTOR_URL=%q\n' "$COLLECTOR_URL"
         printf 'API_KEY=%q\n' "$API_KEY"
     } > "$CONFIG_FILE"
@@ -96,23 +122,14 @@ fi
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
 
+HPN_PORT="${HPN_PORT:-}"
+JET_PORT="${JET_PORT:-}"
+TUNNEL_PORTS="${TUNNEL_PORTS:-}"
+
 : "${SERVER_NAME:?Missing SERVER_NAME in config}"
 : "${REMOTE:?Missing REMOTE in config}"
-: "${HPN_PORT:?Missing HPN_PORT in config}"
-: "${JET_PORT:?Missing JET_PORT in config}"
 : "${COLLECTOR_URL:?Missing COLLECTOR_URL in config}"
 : "${API_KEY:?Missing API_KEY in config}"
-
-[[ "$HPN_PORT" =~ ^[0-9]+$ && "$JET_PORT" =~ ^[0-9]+$ ]] || {
-    echo "ERROR: HPN_PORT and JET_PORT must be numeric." >&2
-    exit 1
-}
-
-(( 10#$HPN_PORT >= 1 && 10#$HPN_PORT <= 65535 &&
-   10#$JET_PORT >= 1 && 10#$JET_PORT <= 65535 )) || {
-    echo "ERROR: Ports must be between 1 and 65535." >&2
-    exit 1
-}
 
 [[ -n "$API_KEY" && "$API_KEY" != "CHANGE_THIS_SECRET" &&
    "$API_KEY" != *[[:space:]]* ]] || {
